@@ -1,11 +1,17 @@
 import numpy as np
-import sys
-import time
-import os
 import pickle
-from numpy import linalg
+import linear_method
 
-### Trine Kay Quady - August 2024 - script to perform LM optmization ###
+### Script to perform orbital optimization via the LM of a VMC trail wavefunction  
+#     (e.g. a single-Slater Jastrow wavefunction)
+#
+#   To run, a dictionary (internal_options_dict) is provided to the the main function:
+#     do_linear_method() as well as some other parameters
+#     following the LM step the orbital coefficient matrix internal_options["mocoeff"]
+#     will be updated with the optimized coefficients
+#
+#   An example input dictionary for propene (6-31G basis) is provided in examples/
+#   calling this function directly will produce an updated orbital coefficient matrix 
 
 def cm_array_to_matrix_ind(ind, rows):
   """ convert column major vector index to 2D matrix index
@@ -115,6 +121,7 @@ def print_certain_el_in_Cmat(C_mat, fixed_ind):
         #"\n\n Current optimizable elements in C\n", 
         C, flush=True) 
 
+# M8
 def param_vec_to_mat(param_vec, rows, cols, no_opt_ind=np.array([])):
   """ Convert vector of parameter updates to a matrix 
 
@@ -132,10 +139,7 @@ def param_vec_to_mat(param_vec, rows, cols, no_opt_ind=np.array([])):
   delta_p_vec = np.zeros(rows*cols)
   opt_ind = np.setdiff1d(np.arange(rows*cols), no_opt_ind) # remove inds of fix params from all mo coeff inds
 
-  # Can I be sure the map is 1-to-1?
-  #print("len of opt_ind: ", len(opt_ind), "should match param_vec = ", len(param_vec), flush=True)
   delta_p_vec[opt_ind] = param_vec
-  #print("delta_p_vec", delta_p_vec, flush=True)
   delta_p_mat = np.transpose(delta_p_vec.reshape(cols,rows))  # AO x MO column major matrix from array
   #print("\ndelta_p Matrix:\n", delta_p_mat, flush=True)
 
@@ -350,10 +354,16 @@ def select_fixed_ind(C, Z, basis_centers, nn, add_neighboors=True):
 
   return fixed_param_ind 
 
-
+# MM1
 def make_LM_dict(options, a):
   """ Creates a dictionary of key linear method pieces per iteration 
-      a - iteration number 
+
+  params:
+    options - dictionary of wfn info that went into VMC calc
+          a - LM iteration number 
+
+  return
+    LM_dict - dictionary of LM specific pieces
   """
   LM_dict = {
 
@@ -378,27 +388,22 @@ def make_LM_dict(options, a):
     ## use selected-LCAO algorithm
     "selected_LCAO" : options["selected_LCAO"],
 
-    ## keep 0's frozen at 0 in optiization
-    #"zeros_fixed" : options["zeros_fixed"],
-
-    ## indices of a subset of orbitals specifically optimize 
-    #"opt_these_orbs" : options["opt_these_orbs"],
-
     # delta energy (Ht) filter to use if selection alg is turned on
     "epsilon" : options["epsilon"],
 
     # initialize list of param updates at this step to make sure same update isnt chosen if diverged
     "dp_mat" : [],
 
+    # max allowable change to MO energy by any one LCAO coeff
+    "max_delta_p": options["max_delta_p"],
   }
-
-  LM_dict["max_delta_p"] = get_dE_thresh(a) if options['dE_schedule'] else options["max_delta_p"]
 
   return LM_dict
 
-def orth_lm_matrices(nvp, acc_dict, total_total_e, nbat):
+# MM2
+def orth_lm_matrices(nvp, acc_dict, total_total_e):
   """ Build linear method matrices (no H shift) in orthogonalized basis from accumulators
-
+        Eq's can be found in Tolouse and Umrigar, JCP 2008.
   params:
               nvp - number of variational parameters
          acc_dict - dictionary of accumulators to build matrices from
@@ -408,31 +413,22 @@ def orth_lm_matrices(nvp, acc_dict, total_total_e, nbat):
   return:
    full_orth_Hmat - nvp+1 x nvp+1 orthogonalized Hamiltonian matrix
    full_orth_Smat - nvp+1 x nvp+1 orthogonalized overlap matrix
-        ^ save both tp text files
-
   """
 
   # initialize LM info
   full_orth_Smat = np.zeros((nvp+1, nvp+1))	
   full_orth_Hmat = np.zeros((nvp+1, nvp+1))	
 
-  # Average each param over the num blocks, 
-
   # result [nvp,]
   total_gradE = np.mean(acc_dict["AccumulatorGradE"], axis=0)
   total_PvP0 = np.mean(acc_dict["AccumulatorPvP0"], axis=0)
   total_PvP0El = np.mean(acc_dict["AccumulatorPvP0El"], axis=0)
 
-  # result [nvp,nvp] # matrix info np.mean([nblocks, nvp*nvp], axis=0).reshape(nvp,nvp) => [nvp, nvp]
+  # Average each param over the num blocks, 
+  #   matrix info np.mean([nblocks, nvp*nvp], axis=0).reshape(nvp,nvp) => [nvp, nvp]
   total_SxEmat = np.mean(acc_dict["AccumulatorSxEmat"], axis=0).reshape(nvp,nvp) 
   total_PvP0GradEmat = np.mean(acc_dict["AccumulatorPvP0GradEmat"], axis=0).reshape(nvp,nvp)
   total_orth_Smat = np.mean(acc_dict["AccumulatorOrthSmat"], axis=0).reshape(nvp,nvp)
-
-  print("total_gradE shape ", total_gradE.shape, flush=True)
-  print("total_PvP0 shape ", total_PvP0.shape, flush=True)
-  print("total_SxEmat shape ", total_SxEmat.shape, flush=True)
-  print("total_PvP0GradEmat shape ", total_PvP0GradEmat.shape, flush=True)
-  print("total_orth_Smat shape ", total_orth_Smat.shape, flush=True)
 
   # [nvp, nvp]
   PvP0_PvP0El = np.outer(total_PvP0, total_PvP0El)
@@ -443,7 +439,6 @@ def orth_lm_matrices(nvp, acc_dict, total_total_e, nbat):
 
   #print("- psi_i * (psi_j * E ) - psi_j * (psi_i * E ) \n", - PvP0_PvP0El - np.transpose(PvP0_PvP0El) 
   #    ,flush=True)
-
   full_orth_Hmat[1:,1:] = (total_SxEmat 
                           - PvP0_PvP0El 
                           - np.transpose(PvP0_PvP0El) 
@@ -455,13 +450,7 @@ def orth_lm_matrices(nvp, acc_dict, total_total_e, nbat):
   full_orth_Hmat[1:,0] = total_PvP0El - total_PvP0 * total_total_e  # g_L, column
   full_orth_Hmat[0,1:] = total_PvP0El - total_PvP0 * total_total_e + total_gradE # g_R, row
 
-  full_orth_Smat = full_orth_Smat / nbat
-  full_orth_Hmat = full_orth_Hmat / nbat
-
-  #print("\nFULL orth Smat\n", full_orth_Smat) #np.array2string(full_orth_Smat, separator=', ', formatter={'float_kind': lambda x: "%.3f" % x}))
-  #print("\nFULL orth Hmat before shift\n", full_orth_Hmat) #np.array2string(full_orth_Hmat, separator=', ', formatter={'float_kind': lambda x: "%.3f" % x}))
-
-  return full_orth_Hmat, full_orth_Smat #, w_orth_Hrow
+  return full_orth_Hmat, full_orth_Smat 
 
 def hamiltonian_shift(cI, H):
   """ Add level shift to diagonal Hamiltonian to stabilize optimization 
@@ -527,6 +516,7 @@ def vec_with_minE_lowparam(evals,evec_mat,curr_en,max_param,S,choose_last=False)
         print("\t\tEnergy difference: eval - Evmc = ", np.round(np.real(en-curr_en),5), "is positive. Rediaginalize with larger cI.", flush=True)
         return [], False 
 
+# MM9
 def vec_within_deltaE_fock(C,thresh,F,S,fock_E):
   """
   params:
@@ -538,7 +528,7 @@ def vec_within_deltaE_fock(C,thresh,F,S,fock_E):
               vector of MO energies before param update  
 
   return:
-    accept_dp - bool, True if all MO energies change (reltive to C_0) < thresh 
+    accept_dp - bool, True if all MO energies change (relative to C_0) < thresh 
   """
   
   num_AO, num_MO = C.shape
@@ -547,7 +537,6 @@ def vec_within_deltaE_fock(C,thresh,F,S,fock_E):
     E_0 = fock_E[j]               # energy of MO from full mocoeff vec 
 
     E_new = mo_vec.T @ F @ mo_vec / (mo_vec.T @ S @ mo_vec)  # energy of MO with ith element set to 0
-    # Help should this be updates S aswell or norm_s
 
     E_diff = np.abs(E_new - E_0)
     print("\tMO",j,E_diff,flush=True)
@@ -555,10 +544,8 @@ def vec_within_deltaE_fock(C,thresh,F,S,fock_E):
     if E_diff > thresh: # MO energy cannot be raised by more than thresh
       print("\tMO", j, "has absolute E_diff of", E_diff, " > ", thresh, " --- check next eigenvector", flush=True)
       return False
-
-  # All MO energies change < thresh
-  #print("\tEigenvector accepted at delta_p!", flush=True)
-  return True
+  
+  return True # All MO energies change < thresh
 
 
 def delta_p_lowest_E(H, S, LM_dict, max_param=1., cI_key='cI'):
@@ -654,6 +641,7 @@ def delta_p_sorted_test(H, S, LM_dict, max_param, cI_key='cI'):
 
   return delta_p  #[nopt,] normalized by first element 
 
+# MM6
 def delta_p_dE_fock(H_lm, S_lm, F_hf, S_hf, rows, cols, LM_dict, fixed_param_ind):
   """ Solving generalized eigenvalue problem for vec that changes Fock MO energies below some threshold 
 
@@ -672,11 +660,10 @@ def delta_p_dE_fock(H_lm, S_lm, F_hf, S_hf, rows, cols, LM_dict, fixed_param_ind
     LM_dict['cI'] - final hamiltonian shift used in accepted dp
 
   """
-  mag_max = 2 #0.25                        # hardcoded upper limit to dp element
-  print("Hard coding mag_max to ", mag_max, " instead of 0.25 for H example")
+  mag_max = 0.25                        # hardcoded upper limit to dp element
+  print("Hard coding mag_max to ", mag_max) 
   curr_en = LM_dict["total_en"]         # scalar, VMC energy
-  dE_thresh = 1 #LM_dict['max_delta_p']    # threshold MO energies are allowed to change by
-  print("Hard coding dE_thresh = LM_dict['max_delta_p']",dE_thresh ," instead of", LM_dict['max_delta_p'], "for H example")
+  dE_thresh = LM_dict['max_delta_p']    # threshold MO energies are allowed to change by
   C = LM_dict["mocoeff"].copy()         # mocoeff to update for next iter
 
   norm_S_hf = (C.T @ S_hf @ C)          # [MO,MO]
@@ -697,7 +684,6 @@ def delta_p_dE_fock(H_lm, S_lm, F_hf, S_hf, rows, cols, LM_dict, fixed_param_ind
 
     possible_eval_ind = np.where(E_diff < 0.)[0]
     # Go through possible parameter updates as long as there is an eval < VMC energy
-    #   TODO add energy window here - may be not necesary
     if len(possible_eval_ind) > 0:
       # Check if any of these eigenvectors would not change and MO energy by some amount dE_thresh
       for ind in possible_eval_ind: # loop through indices of sorted eval/vec lower than VMC
@@ -716,7 +702,6 @@ def delta_p_dE_fock(H_lm, S_lm, F_hf, S_hf, rows, cols, LM_dict, fixed_param_ind
 
           # if p_vec accepted delta_p_return == True
           delta_p_return = vec_within_deltaE_fock(C_plus_dp,dE_thresh,F_hf,S_hf,fock_E_before)
-          #print("\t\tdelta_p_return", delta_p_return, flush=True)
           if delta_p_return:
             if len(LM_dict["dp_mat"]) > 0:
               print("dp_mat in LM_dict --- type: ", type(LM_dict["dp_mat"]), "len: ", len(LM_dict["dp_mat"]), flush=True)
@@ -735,13 +720,11 @@ def delta_p_dE_fock(H_lm, S_lm, F_hf, S_hf, rows, cols, LM_dict, fixed_param_ind
               return delta_p_mat 
 
         else: # element in mat was > 0.25
-          #print("\t\tdelta_p_return", delta_p_return, flush=True)
           print("\t\tEigenvector contains element with mag >", mag_max," (hardcoded upper limit), reject without evaulating MO energy and move to next.",flush=True)
 
     # If nothing got accepted at this cI shift - increase and repeat
     print("\t\tRediaginalize with larger cI.", flush=True)
     LM_dict["cI"] *= 10
-
 
 def lm_general_eigen_prob(H, S, curr_en):
   """ Solving generalized eigenvalue problem: 
@@ -815,6 +798,7 @@ def lm_general_eigen_prob(H, S, curr_en):
   #"\nBefore normalizing\n ", evec_best,
   #"\nAfter normalizing wrt first element dp_0 ***returning this*** and normvalue/shape", evec_best_norm, delta_p.shape, "\n",  delta_p, flush=True)
 
+# M7
 def reweight_dp(S, delta_p, xi=0.5):
   """ further normalize params based on Toulouse and Umrigars 2008 paper
   params:
@@ -840,47 +824,8 @@ def reweight_dp(S, delta_p, xi=0.5):
 
   Np = np.sum(N * delta_p)  # scalar 
   w_delta_p = delta_p / ( 1. - Np ) # [1, nvp]
-  #print()     
-  #print("value of denom 1-sum(Np):", ( 1. - Np )) #, "\n final update p: ", w_delta_p.flatten())
-  #print("Diff after - before", (w_delta_p-delta_p).reshape(-1))     
 
   return w_delta_p.reshape(-1), (1-Np)
-
-#def selected_param_vec_to_mat(param_vec, Cmat, no_opt_ind, test_ind, w_Hrow, epsilon):
-#  """ 3-step algorithm 
-#  convert vector of parameter matrices to matrix to add to mocoeff 
-#    and check if trial param is worth adding
-#  TODO: generalize to include Jastrows , currently just orb opt
-#  """
-#  #filtered_Hrow = np.where(w_Hrow > epsilon, w_Hrow, 0.0) # filter Hrow elements less than epsilon
-#
-#  print("selected_param_vec_to_mat",flush=True)
-#  det_nvp = np.prod(Cmat.shape)
-#  full_param_vec = np.zeros(det_nvp)
-#  add_in = 0
-#  count = 0
-#  for i in np.arange(det_nvp):
-#    if i not in no_opt_ind: 	# param change calculated
-#      if i in test_ind:		# trial parameter 
-#        print(i, "is a trial ind with value ", w_Hrow[add_in],flush=True)
-#        if w_Hrow[add_in] > epsilon: # param update significant enough
-#          print(i, "trial ind ACCEPTED!")
-#          full_param_vec[i] = param_vec[add_in] 
-#          count = count+1
-#      else:			# was already turned on
-#        full_param_vec[i] = param_vec[add_in] 
-#      add_in = add_in + 1
-#
-#  print("test_ind", test_ind, flush=True)
-#  if len(test_ind) > 0:
-#    percent_addin = 100 * count/len(test_ind) 
-#    print("percent of tested LM params with value > epsilon added in", np.round(percent_addin,1), '%', flush=True)
-#  else: 
-#    print("test ind has length 0",flush=True)
-#    
-#  param_mat = np.transpose(full_param_vec.reshape(Cmat.shape[1],Cmat.shape[0]))
-#  #print("param mat in param_vec_to_mat\n",np.array2string(param_mat, separator=', ', formatter={'float_kind': lambda x: "%.6f" % x}),flush=True)
-#  return param_mat
 
 # TODO generalized in reduced_basis_matrix check if still necessary
 def reduced_lm_matrices(LM_dict, nbat=1): 
@@ -913,6 +858,7 @@ def reduced_lm_matrices(LM_dict, nbat=1):
 
   return Hmat, Smat
 
+# M5
 def reduced_basis_matrix(matrix, remove_ind,  nbat=1): 
   """ Get LM H and S matrices in basis of optimizable parameters (nopt <= nvp)
 
@@ -924,7 +870,7 @@ def reduced_basis_matrix(matrix, remove_ind,  nbat=1):
          matrix - list of [N-m,N-m] matrices in reduced basis 
   """
 
-  # delete fixed rows and columns from matriix for fixed paramters
+  # delete fixed rows and columns from matrix for fixed paramters
   reduced_mat = []
   for mat in matrix:
     mat = np.delete(np.delete(mat, remove_ind, 0), remove_ind, 1) 
@@ -932,6 +878,7 @@ def reduced_basis_matrix(matrix, remove_ind,  nbat=1):
 
   return reduced_mat 
 
+# MM10
 def get_filtered_basis_ind(C, F_hf, S_hf, epsilon, fixed_ind_opt, rows, cols):
   """ Determine basis of params to opt after energy filtering. Required: do_constrained = selected_LCAO = True.
     
@@ -955,7 +902,6 @@ def get_filtered_basis_ind(C, F_hf, S_hf, epsilon, fixed_ind_opt, rows, cols):
   zero_post = np.argwhere(C_filtered.T.reshape(-1) == 0.0).reshape(-1) # CM in [nvp,nvp] basis
   fixed_ind_nacc_basis = np.union1d(fixed_ind_opt, zero_post) # elements set at fixed union with elements 0 after filtering C+dp 
 
-  #nonzero_before = print_percent_of_mat_greater(internal_options["mocoeff"], 0.0, print_val=False)
   nonzero_delta = print_percent_of_mat_greater(C, 0.0, print_val=False)
   nonzero_filtered = print_percent_of_mat_greater(C_filtered, 0.0, print_val=False)
 
@@ -965,9 +911,11 @@ def get_filtered_basis_ind(C, F_hf, S_hf, epsilon, fixed_ind_opt, rows, cols):
 
   return fixed_ind_nacc_basis 
 
+# MM4
 def get_param_mat(LM_dict, fixed_ind, F_hf, S_hf, rows, cols):
   """
   params:
+          LM_dict - dictionary of all relevant linear method pieces 
         fixed_ind - CM ind of row/cols to remove from opt in nvp basis (not LM nvp+1 yet)
        F_hf, S_hf - AO x AO fock and overlap matrices from pyscf HF calc
              rows - num AOs
@@ -982,11 +930,9 @@ def get_param_mat(LM_dict, fixed_ind, F_hf, S_hf, rows, cols):
   """
   no_opt_LM_ind = fixed_ind + 1 if len(fixed_ind) > 0 else [] # now in nvp+1 basis
 
+  # freeze certain orbs based on normalization or tsLCAO algorithm
   Hmat, Smat = reduced_basis_matrix([LM_dict["Hmat"], LM_dict["Smat"]], no_opt_LM_ind)  # nvp+1 x nvp+1 dimensions
   print("\nDimensions of H and S mat is basis of nopt+1 params:", Hmat.shape, Smat.shape, "Tot opt: ", np.prod(Hmat.shape))
-
-  #param_vec = delta_p_lowest_E(Hmat, Smat, LM_dict, internal_options['max_delta_p']) # nopt dimension, just chooses evec of lowest eval with no elements > 1.
-  #param_vec = delta_p_sorted_test(Hmat, Smat, LM_dict, internal_options['max_delta_p']) # nopt dimension
 
   # LM_dict[cI_key] gets reassigned
   param_mat = delta_p_dE_fock(Hmat, Smat, 
@@ -1015,6 +961,7 @@ def get_dE_thresh(a):
   print("Schedule v7 being used, iter", a, "dE_thresh = ",thresh, flush=True)
   return thresh
 
+# MM3
 def linear_method_step(LM_dict, F_hf, S_hf):
   """ Performs linear method step for next iteration
 
@@ -1074,18 +1021,15 @@ def linear_method_step(LM_dict, F_hf, S_hf):
                               F_hf, S_hf, 
                               rows, cols)
 
-    #LM_dict["dp_mat"].append(param_mat)
-
     print("Max magnitudes in accepted eigenvec (nacc): ", np.sort(np.abs(param_mat.reshape(-1)))[-3:],flush=True)
-
     print("Fixed length of fixed_ind from nopt and nacc bases", num_fixed_og, LM_dict["fixed_param_ind"].size, flush=True)
 
   if param_mat.shape != LM_dict["mocoeff"].shape:
     raise RuntimeError("Calculated linear method update in linear_method_step() has incorrect dimensions! Is", param_mat.shape, "should be", LM_dict["mocoeff"].shape)
 
-  #print("LM_dict[\"dp_mat\"] contents After: ", "\n", len(LM_dict["dp_mat"]), flush=True)
   return param_mat  # AO x MO update matrix
-  
+
+# NN1
 def divergence_check(a, vmc_step_count, total_total_e, prior_iter_E, prior_iter_std_err, internal_options):
   """ If diverged calc new mocoeff, change seed, and prepare internal_options for repeat VMC calc
 
@@ -1094,7 +1038,6 @@ def divergence_check(a, vmc_step_count, total_total_e, prior_iter_E, prior_iter_
 
   if True reassign:
          internal_options: "mocoeff", "fixed_param_ind", "seed", "cI_prev", "vmc_step_count_prev" #,"dE_thresh_prev"  
-
   """
   if a == 0:
     return False, 0                 # move on to optimization step
@@ -1159,29 +1102,30 @@ def divergence_check(a, vmc_step_count, total_total_e, prior_iter_E, prior_iter_
     return False, 0                 # move on to optimization step
   
 
-def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_err, a, nbat=1): 
-  """ Determine next iterations mocoeff and fixed_param_ind based on accumulated date from iter a and the dE_thresh (aka max_delta_p)
+def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_err, a): 
+  """ Determine next iterations mocoeff and fixed_param_ind based on accumulated VMC data from C++ 
 
   params:
-    nvp - number of elements in C if being optimized, else 0
-    internal_options - dictionary of into that went into VMC calc
-    acc_dict - dictioanry of accumulator populated in VMC calc
-    total_total_e - VMC energy
-    iter_E_std_err - VMC standard error on energy
-    a - iteration number
+    internal_options - dictionary of wfn info that went into VMC calc
+            acc_dict - dictioanry of accumulator populated in VMC calc
+       total_total_e - VMC energy
+      iter_E_std_err - VMC standard error on energy
+                   a - iteration number
 
-  if LM on (nvp>0):
-    LM_dict - (..._itera.pkl, save file) containing accumulated orth. H and S data from VMC calc,
-    LM_dict["cI"] and ["fixed_param_ind"] reassigned based on accepted param update
+  files getting saved if LM on (nvp>0):
+    LM_dict..._itera.pkl - save file containing accumulated orth. H and S data from VMC calc if next step 
+                           diverges and orbitals need to be recalced with larger damping factor (cI)
 
-  reassigns:
+  reassigned dictionary items:
     internal_options: mocoeff, fixed_param_ind, cI_prev, dE_thresh_prev
-
+             LM_dict: cI, fixed_param_ind (based on accepted param update)
   """
+  nvp = internal_options['nvp']  # number of elements in orbital coeff matrix if being optimized, else 0
+
   if nvp > 0:
 
     LM_dict = make_LM_dict(internal_options, a)    # assigns file_name, iteration, fixed_param_ind, cI, mocoeff, max_delta_p, constrained_opt, selected_LCAO, epsilon
-    LM_dict["Hmat"], LM_dict["Smat"] = orth_lm_matrices(nvp, acc_dict, total_total_e, nbat) # full nvp+1 x n+1 dimensions
+    LM_dict["Hmat"], LM_dict["Smat"] = orth_lm_matrices(nvp, acc_dict, total_total_e) # full nvp+1 x n+1 dimensions
     LM_dict["total_en"] = total_total_e
     LM_dict["std_err_en"] = iter_E_std_err
 
@@ -1222,3 +1166,20 @@ def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_
     print("No Linear Method Optimization step")
 
 
+
+if __name__ == "__main__":
+  # Example: Linear method (LM) orbital optimization of propene
+  #   using a single slater Jastrow wavefunction in a 6-31G basis
+  #     (simply, a Hartree-Fock wavefunction multiplied by a symmetric 2-body correlation factor) 
+
+  internal_options_pkl = './example/propene_631G_internal_options_dict.pkl' # dictionary of information for the current wavefunction
+  with open(internal_options_pkl, 'rb') as fp:
+    internal_options = pickle.load(fp)
+  acc_dict_pkl = './example/propene_631G_acc_dict.pkl' # dictionary of information accumulated in the VMC sample needed to take the LM step
+  with open(acc_dict_pkl, 'rb') as fp:
+    acc_dict = pickle.load(fp)
+  total_en = -117.19163247530014 # VMC calculated total energy
+  en_std_err = 0.002548 # VMC standard error of the energy 
+  a = 0         # LM iteration number
+
+  linear_method.do_linear_method(internal_options, acc_dict, total_en, en_std_err, a)

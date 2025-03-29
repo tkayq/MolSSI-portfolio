@@ -1,6 +1,6 @@
 # Graduate Student Code Samples – MolSSI Software Fellowship 
 
-This repository showcases selected C++ and Python code samples from two of my research projects completed in my PhD thus far, developed as part of my application for the [MolSSI Software Fellowship for Graduate Students](https://molssi.org/education/fellowships/).
+This repository showcases selected C++ and Python code samples from two of my research projects completed in my PhD thus far, developed as part of my application for the [MolSSI Software Fellowship for Graduate Students](https://molssi.org/fellowship/).
 
 
 Both projects are involve method development within variational Monte Carlo (VMC) a stochastic quantum chemistry method that 
@@ -10,7 +10,7 @@ Both projects are involve method development within variational Monte Carlo (VMC
 Both projects contain a Python and C++ sample taken from the Neuscamman Group in-house codebase: ESSQC. 
 
 [1] T. K. Quady and E. Neuscamman, “A localized and constrained LCAO basis for efficient
-Linear Method orbital optimization in VMC,” In preperation, 2025.
-[2] T. K. Quady, S. Bumann, and E. Neuscamman, “Method-independent cusps for atomic orbitals
-in quantum Monte Carlo,” The Journal of Chemical Physics, vol. 162, p. 104104, Mar. 2025.
+Linear Method orbital optimization in VMC”, In preperation, 2025.
+[2] T. K. Quady, S. Bumann, and E. Neuscamman, [“Method-independent cusps for atomic orbitals
+in quantum Monte Carlo”](https://pubs.aip.org/aip/jcp/article/162/10/104104/3338898), The Journal of Chemical Physics, vol. 162, p. 104104.
 
