@@ -12,6 +12,8 @@ int essqc::qmc::ABDeterminant::get_num_of_vp() const
 	return m_nvp;
 }
 
+///// MolSSI-B -- all following functions involving b (a 5th order switching function) is required for the cusping scheme /////
+
 // switching function for cusped orbitals - PASSED
 double essqc::qmc::ABDeterminant::b_func(double cusp_radius, double nuc_dist)
 {
@@ -86,6 +88,7 @@ void essqc::qmc::ABDeterminant::d2_one_minus_b(double & orb_total, double & b_va
 } 
 
 ///// orbital basis functions /////
+///// MolSSI-B the orthognalized counterparts (called by overloaded function) are required for the cusping scheme ///
 
 // slater s orbital for gaussian cusps - CHECKED
 double essqc::qmc::ABDeterminant::slater_s_cusp(double a0, double zeta, double r)
@@ -168,7 +171,7 @@ double essqc::qmc::ABDeterminant::STOnG_d(const double dist, double (&dist_xyz)[
   return orb_total;
 }
 
-///// orbital derivative info /////
+///// MolSSI-B -- all following orbital derivative info required for the cusping scheme /////
 
 // vector of gradient of the slater s orbital for gaussian cusps --- CHECKED
 void essqc::qmc::ABDeterminant::d1_slater_s_cusp(double a0, double zeta, double r, int i, int n, double diff[3], double d1_Q_vec[3])
@@ -580,7 +583,7 @@ void essqc::qmc::ABDeterminant::get_full_X_mat(const PosVec &e_pos, const PosVec
 	{
         ////////////////////////////////// 
         /*/////////////////////////////////
-		To MolSSI: 
+		To MolSSI-B: 
 
 		This is where I stitched the evaluation of the cusping function to the central VMC sampling framework
 
@@ -1086,7 +1089,7 @@ void essqc::qmc::ABDeterminant::get_orbs_and_derivs(const PosVec &e_pos, const P
 	{
         ////////////////////////////////// 
         /*/////////////////////////////////
-		To MolSSI: 
+		To MolSSI-B: 
 
 		This is where I stitched the evaluation of the cusping function when calculating the derivatives needed to compute the kinetic energy
 		in addition to the LM matrix elements 
@@ -1465,6 +1468,7 @@ void essqc::qmc::ABDeterminant::matprint(const int n, const int m, const double 
   }
 }
 
+// MolSSI-A
 // d/dc_ij Psi / Psi = ([(XC)^-1 X])^T_ij	(alpha + beta) - CHECKED AND GOOD (matches finite diff test)
 void essqc::qmc::ABDeterminant::compute_PvP0(double *const PvP0, double &ratio, int indx)
 {
@@ -1473,25 +1477,37 @@ void essqc::qmc::ABDeterminant::compute_PvP0(double *const PvP0, double &ratio, 
 	
 }
 
-// MolSSI
-// Computing the terms to accumulate for the linear method matrices at each sample 
-//   This invloved analytically calulating the derivatives of the new cusping function, as well as the GTOs to calculate and 
-//   store the matrix elements necessary to build the orthogonalized LM matrices
-//   
-// This is far from a fully optimized code as one of my research projects is more concerned with providing the proof of principle
-//   of an orbital optimization scheme that removes AOs that should not contribute much to an MO, on the fly. This slicing and dicing of the LM matrices 
-//   is all done on the python side. FOr simplicity I did not go into describing the inner workings of the sLCAO algorithm
-//	 in the linear method code example, but those functions are built to be flexible enough to change what is considered optimizable in the full orbital basis
-//   at each LM iteration
+////////////////////////////////// 
+/*/////////////////////////////////
+To MolSSI-A: 
 
-// d/dc_ij (H Psi / Psi) = -1/2 d/dc_ij lap(psi) - (grad(psi)) . (d/dc_ij grad(psi))
-//  (lap term)           = -1/2 lap_X^T [(XC)^-1]^T + 1/2 X^T [C (XC)^-1]^T lap_X^T [(XC)^-1]^T + grad_X^T K^T + X^T [C (XC)^-1]^T grad_X^T [K^-1]^T 
-//  (grad.grad term)       - grad_X^T(scaled by gradlogpsi) [(XC)^-1]^T + X^T [(XC)^-1]^T C^T grad_X^T(scaled by gradlogpsi) [(XC)^-1]^T }_ij	
+   Here, I am computing the terms to accumulate for the linear method matrices at each sample 
+     This invloved analytically calulating the derivatives of the new cusping function (Project B), 
+	 as well as the GTOs to calculate and store the matrix elements necessary to build the 
+	 orthogonalized LM matrices
+     
+   This is far from a fully optimized code as one of my research projects is more concerned with providing the proof of principle
+     of an orbital optimization scheme that removes AOs that should not contribute much to an MO, on the fly. 
+	 This slicing and dicing of the LM matrices is all done on the python side. For simplicity I did not go 
+	 into describing the inner workings of the sLCAO algorithm in this software portfolio
+  	 but the LM function in python were built to be flexible enough to change what is considered optimizable 
+	 in the full orbital basis at each LM iteration
+
+   The below function computes the derivative of the energy with respect to the orbital coefficient 'c_ij', this entails:
+
+   d/dc_ij (H Psi / Psi) = -1/2 d/dc_ij lap(psi) - (grad(psi)) . (d/dc_ij grad(psi))
+    (lap term)           = -1/2 lap_X^T [(XC)^-1]^T + 1/2 X^T [C (XC)^-1]^T lap_X^T [(XC)^-1]^T 
+						   + grad_X^T K^T + X^T [C (XC)^-1]^T grad_X^T [K^-1]^T 
+    (grad.grad term)       - grad_X^T(scaled by gradlogpsi) [(XC)^-1]^T 
+						   + X^T [(XC)^-1]^T C^T grad_X^T(scaled by gradlogpsi) [(XC)^-1]^T }_ij	
+
+*////////////////////////////////// 
+////////////////////////////////// 
 void essqc::qmc::ABDeterminant::compute_grad_E(double *const grad_E, double *const grad_log_psi, int indx)
 {
 	std::vector<double> grad_E_temp(get_num_of_vp(), 0.0);
 
-	// TODO make der1 an input calculated in compute_ke_pieces
+	// In the future: make der1 an input calculated in compute_ke_pieces
 	const int lm_space_needed = 11 * m_na * m_no + 6 * m_na * m_na * m_no;
 	std::vector<double> m_workspace_2(lm_space_needed, 0.0);	
 	double * der1[3];
@@ -1540,7 +1556,7 @@ void essqc::qmc::ABDeterminant::compute_grad_E(double *const grad_E, double *con
 		for (int i = 0; i < m_na; i++)
 		{
 
-			// i need just the determinants contribution to gradlogpsi which is also already calculated in compute_ke_pieces
+			// I need just the determinants contribution to gradlogpsi which is also already calculated in compute_ke_pieces
 			// (dX/dri C)_ithrow . XCi_ithcol
 			const double d2dmu2_i_scalar = essqc::ddot(m_na, proda + i, m_na, &m_xci.at(i * m_na), 1);
 
@@ -1578,6 +1594,9 @@ void essqc::qmc::ABDeterminant::compute_grad_E(double *const grad_E, double *con
 
 }
 
+// MolSSI-A
+//
+// key to the math pieces below
 // d/dc_ij (d^n/dmu^n log psi) = d^n/dmu^n(X)^T * XC^-1^T - X^T * XC^-1^T * C^T * d^n/dmu^n(X)^T * XC^-1^T	
 // ddv_gradlogpsi [3,  na * no*na] = [xyz, [noxna col major ddc_ij ddmu_elec gradlogpsi ]_elec(alpha or beta) ... ]
 // ddv_laplogpsi [no*na] = same as grad but summed over mu and elec
@@ -1624,6 +1643,8 @@ void essqc::qmc::ABDeterminant::compute_ddv_dnlogpsi(double ** ddv_gradlogpsi, d
 
 }
 
+// MolSSI-A
+//
 // d/dc_ij (dn log psi) = dnX^T * XC^-1^T - X^T * XC^-1^T * C^T * dnXi^T * XC^-1^T	[3, m_no, m_na]
 // n can represent gradient or laplacian term
 // A_naxno is the no x na outerproduct of dnX^T_ithcol * C_ithrowA
@@ -1639,7 +1660,6 @@ void essqc::qmc::ABDeterminant::outerprod_to_ddv_dnlogpsi(double * A_naxno, doub
 	// d/dc_ij (dn log psi) = dnX^T * XC^-1^T < adding first tern to contribut to grad log psi
 	essqc::daxpy(m_na*m_no, 1.0, A_naxno, 1, ddv_dnlogpsi, 1);
   
-    // GOOD
 	// C^T * A_naxno: multiply the transpose of m_C by A_naxno and save the result to B_naxna
 	essqc::dgemm('T', 'N', m_na, m_na, m_no, 1.0, &m_C.at(0), m_no, A_naxno, m_no, 0.0, B_naxna_ptr, m_na);	// B_naxna is [m_na, m_na]
 

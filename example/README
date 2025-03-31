@@ -1,0 +1,11 @@
+TODO:
+
+add test internal_options_dict and accum_dict (both pkl's)
+for the nth iteration of propene in a 6-31G basis
+
+from MolSSI-portfolio/ run
+	>> python linear_method/linear_method.py
+
+to run a divergence check on the interation and then calculate the 
+orbitals for the next LM iteration
+ 

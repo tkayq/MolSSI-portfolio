@@ -606,8 +606,8 @@ def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_
 
     internal_options['mocoeff'] = internal_options['mocoeff'] + param_update
 
-    # TEST turning of sLCAO after 20 iters to fix the current test parameter set
-    if a == 18: # allow last filtering to happen then freez3
+    # TESTING turning off sLCAO after 18 iters to fix the current test parameter set
+    if a == 18: # allow last filtering to happen then freeze
       print("Note, turning off selection algorithim and freezing params after iter 19")
       internal_options["selected_LCAO"] = False # stops rediagonalization of LM update in the basis of accepted params in linear_method_step()
       internal_options["zeros_fixed"] = True # fixes existing 0's for rest of calc
