@@ -12,7 +12,7 @@ int essqc::qmc::ABDeterminant::get_num_of_vp() const
 	return m_nvp;
 }
 
-///// MolSSI-B -- all following functions involving b (a 5th order switching function) is required for the cusping scheme /////
+///// MolSSI -- all following functions involving b (a 5th order switching function) is required for the cusping scheme /////
 
 // switching function for cusped orbitals - PASSED
 double essqc::qmc::ABDeterminant::b_func(double cusp_radius, double nuc_dist)
@@ -88,7 +88,7 @@ void essqc::qmc::ABDeterminant::d2_one_minus_b(double & orb_total, double & b_va
 } 
 
 ///// orbital basis functions /////
-///// MolSSI-B the orthognalized counterparts (called by overloaded function) are required for the cusping scheme ///
+///// MolSSI the orthognalized counterparts (called by overloaded function) are required for the cusping scheme ///
 
 // slater s orbital for gaussian cusps - CHECKED
 double essqc::qmc::ABDeterminant::slater_s_cusp(double a0, double zeta, double r)
@@ -171,7 +171,7 @@ double essqc::qmc::ABDeterminant::STOnG_d(const double dist, double (&dist_xyz)[
   return orb_total;
 }
 
-///// MolSSI-B -- all following orbital derivative info required for the cusping scheme /////
+///// MolSSI -- all following orbital derivative info required for the cusping scheme /////
 
 // vector of gradient of the slater s orbital for gaussian cusps --- CHECKED
 void essqc::qmc::ABDeterminant::d1_slater_s_cusp(double a0, double zeta, double r, int i, int n, double diff[3], double d1_Q_vec[3])
