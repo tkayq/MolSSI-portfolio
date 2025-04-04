@@ -5,5 +5,6 @@ This repository showcases selected C++ and Python code samples from two of my re
 I leave the description of the software examples to the detailed document that led you here.
 
 Thank you!
+
 -Trine K Quady
 
