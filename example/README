@@ -1,11 +1,21 @@
-TODO:
-
-add test internal_options_dict and accum_dict (both pkl's)
-for the nth iteration of propene in a 6-31G basis
-
-from MolSSI-portfolio/ run
+To run linear method example on propene 
+  (STO-3G basis, single-Slater Jastrow wavefunction)
+  
+  from MolSSI-portfolio/ run:
 	>> python linear_method/linear_method.py
 
-to run a divergence check on the interation and then calculate the 
-orbitals for the next LM iteration
- 
+1.) Divergence check on the current iteration (second update calc) 
+    is run by comparing the new energy to the previous energy
+	that has been provided (likewise with the corresponding standard 
+	error). 
+	IF new energy > 4*standard error of the previous iteration,
+	 calculation is diverged and a new update step from the previous 
+	 LM calculation is made.
+	ELSE go onto take linear method step
+
+2.) Linear method step is calculated, using the internal_options_dict 
+    for this current iterations calculation and the accumulated LM
+	terms from sample (in acc_dict)
+
+In this example, the energy has NOT diverged and the LM step will be 
+immediately calculated 

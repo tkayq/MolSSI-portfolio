@@ -1,6 +1,5 @@
 import numpy as np
 import pickle
-import sLCAO_algorithm  # python file containg the selected-LCAO algorithm for accelerated orbital optimization in VMC
 
 ### Script to perform orbital optimization via the LM of a VMC trail wavefunction  
 #     (e.g. a single-Slater Jastrow wavefunction)
@@ -12,6 +11,66 @@ import sLCAO_algorithm  # python file containg the selected-LCAO algorithm for a
 #
 #   An example input dictionary for propene (6-31G basis) is provided in examples/
 #   calling this function directly will produce an updated orbital coefficient matrix 
+
+def cm_array_to_matrix_ind(ind, rows):
+  """ convert column major vector index to 2D matrix index
+
+  params:
+     ind - array of vector indices (column major) 
+    rows - scalar, # of rows 
+
+  return:
+      ij - [N,2] array of matrix row by column index
+    
+  """
+  ind = np.atleast_1d(ind)
+  i = ind % rows
+  j = ind // rows
+  ij = np.stack((i.reshape([-1]),j.reshape([-1])), axis=-1) # [N,2] array
+  return ij 
+
+def matrix_ind_to_cm_array(ind, rows, cols):
+  """ convert 2D matrix index to column major vector index  
+
+  params:
+       ind - [MO, 2] array of matrix indices 
+      rows - scalar, # of rows in matrix
+      cols - scalar, # of columns in matrix
+
+  return:
+    cm_ind - [MO, ] vector indices of column major matrix 
+    
+  """
+  cm_ind = rows * ind[:,1] + ind[:,0]  # total_rows * col + row 
+  return cm_ind 
+
+def fixed_MO_norm(C_mat, other_fixed_ind=[]):
+  """ Remove largest AO from existing optimizable coefficients per MO
+ 
+  params:
+            C_mat - AO x MO mocoeff numpy array
+          fix_ind - array of existing indices (column major) to freeze,
+
+  return:
+    all_fixed_ind - updated array of indices (column major) in mocoeff to freeze, including norm
+
+  """
+  rows, cols = C_mat.shape
+
+  # isoate only the optimizable params to norm wrt
+  if len(other_fixed_ind) > 0:
+    fix_mat_ind = (cm_array_to_matrix_ind(other_fixed_ind, rows)).astype(int)
+
+  # get ind of each coeff to norm wrt
+  col_ind = np.arange(cols)  # index of each MO
+  max_MO_ind = np.argmax(np.abs(C_mat), axis=0) 
+  matrix_ind = np.stack((max_MO_ind, col_ind), axis=-1) # [MO, 2] array
+  vec_ind_of_norm = matrix_ind_to_cm_array(matrix_ind, rows, cols) 
+
+  # combine already fixed and norm indices 
+  all_fixed_ind = np.sort(np.unique(np.concatenate((vec_ind_of_norm, other_fixed_ind), axis=None)))
+
+  return all_fixed_ind
 
 def delta_E_filter_C_mat_unsorted(C_mat, F, S, delta_E):
   """ filter C mat by check each AOs contribution by setting removing and calc E_MO change 
@@ -226,7 +285,6 @@ def delta_p_dE_fock(H_lm, S_lm, F_hf, S_hf, rows, cols, LM_dict, fixed_param_ind
 
   """
   mag_max = 0.25                        # hardcoded upper limit to dp element
-  print("Hard coding mag_max to ", mag_max) 
   curr_en = LM_dict["total_en"]         # scalar, VMC energy
   dE_thresh = LM_dict['max_delta_p']    # threshold MO energies are allowed to change by
   C = LM_dict["mocoeff"].copy()         # mocoeff to update for next iter
@@ -407,6 +465,65 @@ def linear_method_step(LM_dict, F_hf, S_hf):
 
   return param_mat  # AO x MO update matrix
 
+
+def set_param_ind(C, Z, basis_centers, nn, con_opt, zeros_fixed, selected_LCAO, opt_these_orbs, add_neighboors=True):
+  """ Set up all paramters to freeze at next iteration, including normalization
+  params: 
+                  C - AO x MO mocoeff matrix to freeze params wrt 
+                  Z - array of atom charges
+      basis_centers - AO length array of scalars corresponding to nuceli AO is centered on
+                 nn - list of nearest neighboors where each row ind correspond nuclei attached to the the ind nuclei  
+            LM_dict - dictionary with relevant linear method pieces (LM_dict OR internal_options if setting up opt)
+            con_opt - bool, constrained optimization?
+        zeros_fixed - bool, if con_opt do not opt params = 0
+      selected_LCAO - bool, if con_opt use selected LCAO algorithm
+     opt_these_orbs - CM array of ind to only include in opt if con_opt, else empty 
+     add_neighboors - False, opt bfs on atoms turned on
+                      True, " " and each atoms nearest neighboor
+                      only applies if selectedLCAO == True
+
+  return:
+    fixed_param_ind - CM indices of parameters to remove from opt in nvp basis, includes normalization
+
+  """
+
+  print("")
+  print("Set parameters to be optimized next", flush=True)
+
+  if con_opt is True:
+    print("---> Constrained Optimization\n", flush=True)
+
+    if zeros_fixed == True:
+      print("--------> Fixing Zero Indices", flush=True)
+      fixed_param_ind = np.argwhere(C.T.reshape(-1) == 0.0).astype(int) #zero_indices
+
+    elif selected_LCAO == True:
+      print("--------> Selection Algorithm", flush=True) 
+
+      # update already resolved in the bases of accepted parameters, keep these as what to fix, now just add neighboors
+      fixed_param_ind = select_fixed_ind(C, Z, basis_centers, nn, add_neighboors)
+
+    else: # opt_these_orbs
+      print("--------> Optimizing select AOs: ", 
+            opt_these_orbs, flush=True) 
+
+      det_nvp = np.prod(C.shape)
+      no_opt_ind = np.setdiff1d(np.arange(det_nvp), opt_these_orbs).astype(int)  # cm_array ind of AO coeffs to freeze
+      fixed_param_ind = no_opt_ind.astype(int) 
+      print("params to fix", fixed_param_ind)
+
+    # fix largest AO of existing params per MO
+    fixed_param_ind = fixed_MO_norm(C, fixed_param_ind).astype(int) 
+
+  else:
+    # fixed_param_ind already contains each largest AO in
+    print("---> Un-constrained Optimization", flush=True)
+    fixed_param_ind = fixed_MO_norm(C).astype(int) # only fix largest AO per MO
+
+  #print_certain_el_in_Cmat(LM_dict["mocoeff"], fixed_param_ind)
+  print("-----------------------------------------------")
+  return fixed_param_ind
+
 def orth_lm_matrices(nvp, acc_dict, total_total_e):
   """ Build linear method matrices (no H shift) in orthogonalized basis from accumulators
         Eq's can be found in Tolouse and Umrigar, JCP 2008.
@@ -515,7 +632,13 @@ def divergence_check(a, vmc_step_count, total_total_e, prior_iter_E, prior_iter_
   if a == 0:
     return False, 0   # move on to optimization step
 
-  print("\nDivergence check:")
+  print()
+  print("#################################")
+  print("Check if the energy has diverged!")
+  print("#################################")
+  print()
+
+  print("Divergence check:")
   print("\ttotal_total_e", total_total_e)
   print("\tprior_iter_E", prior_iter_E)
   print("\tprior_iter_std_err", prior_iter_std_err)
@@ -548,7 +671,7 @@ def divergence_check(a, vmc_step_count, total_total_e, prior_iter_E, prior_iter_
     internal_options["mocoeff"] = LM_dict_prior["mocoeff"] + param_update
 
     # determine indices of orbitals to not update with the LM for MO normalization OR sLCAO algorithm
-    internal_options["fixed_param_ind"] = sLCAO_algorithm.set_param_ind(internal_options["mocoeff"], 
+    internal_options["fixed_param_ind"] = set_param_ind(internal_options["mocoeff"], 
                                                         internal_options["Z"], 
                                                         internal_options["basis_centers"], 
                                                         internal_options["nearest_neighboors"], 
@@ -572,9 +695,10 @@ def divergence_check(a, vmc_step_count, total_total_e, prior_iter_E, prior_iter_
     return True, vmc_step_count     # repeat calculation  
     
   else:
+    print("\n---> Energy did NOT diverge, move on to LM update")
     return False, 0                 # move on to optimization step
   
-def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_err, a): 
+def do_linear_method(internal_options, acc_dict, total_total_e, iter_E_std_err, a): 
   """ Determine next iterations mocoeff and fixed_param_ind based on accumulated VMC data from C++ 
 
   params:
@@ -592,6 +716,12 @@ def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_
     internal_options: mocoeff, fixed_param_ind, cI_prev, dE_thresh_prev
              LM_dict: cI, fixed_param_ind (based on accepted param update)
   """
+  print()
+  print("#################################")
+  print("Computing linear method update!!!")
+  print("#################################")
+  print()
+
   nvp = internal_options['nvp']  # number of elements in orbital coeff matrix if being optimized, else 0
 
   if nvp > 0:
@@ -613,7 +743,7 @@ def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_
       internal_options["zeros_fixed"] = True # fixes existing 0's for rest of calc
 
     # determine indices of orbitals to not update with the LM for MO normalization OR sLCAO algorithm
-    internal_options["fixed_param_ind"] = sLCAO_algorithm.set_param_ind(internal_options["mocoeff"], 
+    internal_options["fixed_param_ind"] = set_param_ind(internal_options["mocoeff"], 
                                                         internal_options["Z"], 
                                                         internal_options["basis_centers"], 
                                                         internal_options["nearest_neighboors"], 
@@ -627,10 +757,10 @@ def do_linear_method(nvp, internal_options, acc_dict, total_total_e, iter_E_std_
     internal_options["cI_prev"] = LM_dict["cI"] 
     internal_options["dE_thresh_prev"] = LM_dict['max_delta_p']
 
-    # Save the dictionary to a pickle file
-    file_path = internal_options['file_name']+'_LM_dict_iter'+str(a)+'.pkl'
-    with open(file_path, 'wb') as file_name:
-      pickle.dump(LM_dict, file_name)
+    ## Save the dictionary to a pickle file
+    #file_path = internal_options['file_name']+'_LM_dict_iter'+str(a)+'.pkl'
+    #with open(file_path, 'wb') as file_name:
+    #  pickle.dump(LM_dict, file_name)
 
     print("\n==========================\n", 
           "Go on: C matrix updated",
@@ -643,19 +773,19 @@ if __name__ == "__main__":
   #     (simply, a Hartree-Fock wavefunction multiplied by a symmetric 2-body correlation factor) 
 
   # INPUTS
-  internal_options_pkl = './example/propene_631G_internal_options_dict.pkl' # dictionary of information for the current wavefunction
-  acc_dict_pkl = './example/propene_631G_acc_dict.pkl' # dictionary of information accumulated in the VMC sample needed to take the LM step
+  internal_options_pkl = './example/propene_STO3G_internal_options_dict_iter1.pkl' # dictionary of information for the current wavefunction
+  acc_dict_pkl = './example/propene_STO3G_LM_acc_dict_iter1.pkl' # dictionary of information accumulated in the VMC sample needed to take the LM step
   vmc_step_count = 0          # ongoing count of how many time LM has diverged and had to be recalcuated
-  prior_total_en =            # VMC calculated total energy of prior LM step
-  total_en = -117.1916325     # VMC calculated total energy
-  prior_en_std_err =          # VMC standard error of the energy of prior LM step
-  en_std_err = 0.002548       # VMC standard error of the energy 
-  a = 0                       # LM iteration number
+  prior_total_en = -116.77713 # VMC energy of prior LM step
+  total_en = -116.79412       # VMC energy 
+  prior_en_std_err = 0.003423 # VMC standard error of the energy of prior LM step
+  en_std_err = 0.00302        # VMC standard error of the energy 
+  a = 1                       # LM iteration number, second update step being calculated
 
-  with open(internal_options_pkl, 'rb') as fp:
+  with open(internal_options_pkl, 'rb') as fp: 
     internal_options = pickle.load(fp)
 
-  with open(acc_dict_pkl, 'rb') as fp:
+  with open(acc_dict_pkl, 'rb') as fp: 
     acc_dict = pickle.load(fp)
 
   ## Step 1. after first LM step, test if the VMC energy diverged with respect to the previous step
